@@ -22,6 +22,7 @@ class Vapi {
   final String publicKey;
   final String? apiBaseUrl;
   final _streamController = StreamController<VapiEvent>();
+  String? _callId; // Add this line
 
   Stream<VapiEvent> get onEvent => _streamController.stream;
 
@@ -29,7 +30,7 @@ class Vapi {
 
   Vapi(this.publicKey, [this.apiBaseUrl]);
 
-  Future<void> start({
+  Future<String?> start({
     String? assistantId,
     dynamic assistant,
     dynamic assistantOverrides = const {},
@@ -45,7 +46,7 @@ class Vapi {
       microphoneStatus = await Permission.microphone.request();
       if (microphoneStatus.isPermanentlyDenied) {
         openAppSettings();
-        return;
+        return null;
       }
     }
 
@@ -80,6 +81,8 @@ class Vapi {
     var results = await Future.wait([vapiCallFuture, clientCreationFuture]);
 
     var response = results[0] as http.Response;
+    // print the response body
+    print(response.body);
     var client = results[1] as CallClient;
 
     _client = client;
@@ -91,10 +94,11 @@ class Vapi {
 
       var data = jsonDecode(response.body);
       webCallUrl = data['webCallUrl'];
+      _callId = data['id']; // Extract and store the call ID
       if (webCallUrl == null) {
         print('🆘 ${DateTime.now()}: Vapi - Vapi Call URL not found');
         emit(VapiEvent("call-error"));
-        return;
+        return null;
       }
     } else {
       client.dispose();
@@ -102,7 +106,7 @@ class Vapi {
       print(
           '🆘 ${DateTime.now()}: Vapi - Failed to create Vapi Call. Error: ${response.body}');
       emit(VapiEvent("call-error"));
-      return;
+      return null;
     }
 
     print("🔄 ${DateTime.now()}: Vapi - Joining Call...");
@@ -162,6 +166,8 @@ class Vapi {
         .catchError((e) {
       throw Exception('🆘 ${DateTime.now()}: Vapi - Failed to join call: $e');
     });
+    return _callId;
+
   }
 
   Future<CallClient> _createClientWithRetries(
@@ -221,14 +227,13 @@ class Vapi {
   Future<void> send(dynamic message) async {
     await _client!.sendAppMessage(jsonEncode(message), null);
   }
-
   void _onAppMessage(String msg) {
     try {
       var parsedMessage = jsonDecode(msg);
 
       if (parsedMessage == "listening") {
         print("✅ ${DateTime.now()}: Vapi - Assistant Connected.");
-        emit(VapiEvent("call-start"));
+        emit(VapiEvent("call-start", _callId)); // Include the call ID
       }
 
       emit(VapiEvent("message", parsedMessage));
@@ -236,6 +241,7 @@ class Vapi {
       print("Error parsing message data: $parseError");
     }
   }
+
 
   Future<void> stop() async {
     if (_client == null) {
